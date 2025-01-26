@@ -89,6 +89,18 @@ public class VirtualRekordbox extends LifecycleParticipant {
      */
     private final Map<DeviceReference, DeviceUpdate> updates = new ConcurrentHashMap<>();
 
+    /**
+     * Keep track of the most recent PSSI for each player we have seen, indexed by the address they came from.
+     * These need to be buffered because they come in chunks.
+     */
+    private final Map<DeviceReference, VirtualRekordboxMetadataBuffer> currentPssiByDevice = new ConcurrentHashMap<>();
+
+    /**
+     * Keep track of the most recent JPEG artwork for each player we have seen, indexed by the address they came from.
+     * These need to be buffered because they come in chunks. Uses a map with int keys and ByteBuffer value instead
+     * of an array of ByteBuffer to avoid having to loop to check if all elements are filled for each chunk.
+     */
+    private final Map<DeviceReference, VirtualRekordboxMetadataBuffer> currentArtworkByDevice = new ConcurrentHashMap<>();
 
     /**
      * Get the device number that is used when sending presence announcements on the network to pose as a virtual rekordbox.
@@ -360,12 +372,35 @@ public class VirtualRekordbox extends LifecycleParticipant {
                     final int rekordboxId = (int) Util.bytesToNumber(data, 0x28, 4);
                     // Record this song structure so that we can use it for matching tracks in CdjStatus packets.
                     if (rekordboxId != 0) {
-                        final ByteBuffer pssiFromOpus = ByteBuffer.wrap(Arrays.copyOfRange(data, 0x35, data.length));
+
+                        final int packetNumber = (int) Util.bytesToNumber(data, 0x31, 1);
+                        final int totalPackets = (int) Util.bytesToNumber(data, 0x33, 1) - 1;
+                        final ByteBuffer pssiChunkFromOpus = ByteBuffer.wrap(Arrays.copyOfRange(data, 0x35, data.length));
+
                         final int player = Util.translateOpusPlayerNumbers(data[0x21]);
-                        // Also record the conceptual source slot that represents the USB slot from which this track seems to have been loaded
-                        final int sourceSlot = OpusProvider.getInstance().findMatchingUsbSlotForTrack(rekordboxId, player, pssiFromOpus);
-                        if (sourceSlot != 0) {  // We found a match, record it.
-                            playerTrackSourceSlots.put(player, SlotReference.getSlotReference(sourceSlot, USB_SLOT));
+                        final DeviceReference deviceReference = DeviceReference.getDeviceReference(player, packet.getAddress());
+
+                        VirtualRekordboxMetadataBuffer metadataBuffer = currentPssiByDevice.get(deviceReference);
+
+                        if (Objects.isNull(metadataBuffer) || metadataBuffer.getRekordboxId() != rekordboxId) {
+                            ConcurrentHashMap<Integer, ByteBuffer> chunks = new ConcurrentHashMap<>();
+                            chunks.put(packetNumber, pssiChunkFromOpus);
+                            metadataBuffer = new VirtualRekordboxMetadataBuffer(rekordboxId, totalPackets, chunks);
+                            currentPssiByDevice.put(deviceReference, metadataBuffer);
+                        } else if (metadataBuffer.getMatchedUsb() == 0) {
+                            ConcurrentHashMap<Integer, ByteBuffer> chunks = metadataBuffer.getChunks();
+                            chunks.put(packetNumber, pssiChunkFromOpus);
+
+                            if (chunks.size() == totalPackets) {
+                                // We have received all PSSI chunks, lets compare with whats in the USB slots.
+                                final int sourceSlot = OpusProvider.getInstance().findMatchingUsbSlotForTrack(rekordboxId, player, metadataBuffer.getChunks());
+
+                                // Also record the conceptual source slot that represents the USB slot from which this track seems to have been loaded
+                                if (sourceSlot != 0) {  // We found a match, record it.
+                                    playerTrackSourceSlots.put(player, SlotReference.getSlotReference(sourceSlot, USB_SLOT));
+                                    metadataBuffer.setMatchedUsb(sourceSlot);
+                                }
+                            }
                         }
                     }
                 } else if (data[0x25] == METADATA_TYPE_IDENTIFIER_SONG_CHANGE) {

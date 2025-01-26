@@ -581,12 +581,18 @@ public class OpusProvider {
      * @param archive the database and filesystem we are comparing the PSSI+rekordboxId against
      * @return true if matched
      */
-    private boolean trackMatchesArchive(DataReference dataRef, ByteBuffer pssiFromOpus, RekordboxUsbArchive archive) {
+    private boolean trackMatchesArchive(DataReference dataRef, Map<Integer, ByteBuffer> pssiFromOpus, RekordboxUsbArchive archive) {
         RekordboxAnlz anlz = findExtendedAnalysis(archive.getUsbSlot(), dataRef, archive.getDatabase(), archive.getFileSystem());
         if (anlz != null) {
             for (RekordboxAnlz.TaggedSection taggedSection : anlz.sections()) {
                 if (taggedSection.fourcc() == RekordboxAnlz.SectionTags.SONG_STRUCTURE) {
-                    return Util.indexOfByteBuffer(pssiFromOpus, taggedSection._raw_body()) > -1;
+                    for (int i = 0; i < pssiFromOpus.size(); i++) {
+                        if (Util.indexOfByteBuffer(pssiFromOpus.get(i), taggedSection._raw_body()) == -1){
+                            return false;
+                        }
+                    }
+
+                    return true;
                 }
             }
         }
@@ -602,7 +608,7 @@ public class OpusProvider {
      * @return the USB slot number in which a match was found, or zero if none was found
      */
     @API(status = API.Status.EXPERIMENTAL)
-    public int findMatchingUsbSlotForTrack(int rekordboxId, int player, ByteBuffer songStructureBytes){
+    public int findMatchingUsbSlotForTrack(int rekordboxId, int player, Map<Integer, ByteBuffer> songStructureBytes){
         SlotReference slotRef = SlotReference.getSlotReference(player, CdjStatus.TrackSourceSlot.USB_SLOT);
         DataReference dataRef = new DataReference(slotRef, rekordboxId);
 
@@ -675,7 +681,7 @@ public class OpusProvider {
         if (isRunning()) {
             for (RekordboxUsbArchive archive : usbArchiveMap.values()) {
                 sb.append(", USB ").append(archive.getUsbSlot()).append(" media: ").append(archive.getFileSystem());
-            }
+            }x
         }
         return sb.append("]").toString();
     }
