@@ -681,7 +681,7 @@ public class OpusProvider {
         if (isRunning()) {
             for (RekordboxUsbArchive archive : usbArchiveMap.values()) {
                 sb.append(", USB ").append(archive.getUsbSlot()).append(" media: ").append(archive.getFileSystem());
-            }x
+            }
         }
         return sb.append("]").toString();
     }
